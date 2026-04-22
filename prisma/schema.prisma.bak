@@ -1,0 +1,68 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SEEKER
+  PROVIDER
+}
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  BANNED
+}
+
+enum DemandStatus {
+  OPEN
+  CLOSED
+}
+
+model User {
+  id          String        @id @default(cuid())
+  email       String        @unique
+  password    String
+  role        Role          @default(SEEKER)
+  status      AccountStatus @default(PENDING)
+  isVerified  Boolean       @default(false)
+  name        String
+  phone       String
+  avatarUrl   String?
+  lat         Float?
+  lng         Float?
+  createdAt   DateTime      @default(now())
+  
+  demands     Demand[]      @relation("SeekerDemands")
+  applications Application[]
+}
+
+model Demand {
+  id          String      @id @default(cuid())
+  title       String
+  description String
+  lat         Float
+  lng         Float
+  status      DemandStatus @default(OPEN)
+  seekerId    String
+  seeker      User        @relation("SeekerDemands", fields: [seekerId], references: [id])
+  applications Application[]
+  createdAt   DateTime    @default(now())
+}
+
+model Application {
+  id         String   @id @default(cuid())
+  message    String
+  status     String   @default("PENDING")
+  providerId String
+  provider   User     @relation(fields: [providerId], references: [id])
+  demandId   String
+  demand     Demand   @relation(fields: [demandId], references: [id])
+  createdAt  DateTime @default(now())
+}

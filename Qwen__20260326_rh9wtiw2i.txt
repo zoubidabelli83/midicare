@@ -1,0 +1,24 @@
+✅ User Registration & Login
+✅ Admin Verification
+✅ User Profiles (with provider details)
+✅ Demand Posting
+✅ Provider Applications
+✅ Application Management (Accept/Reject)
+✅ Dashboard (All Roles)
+✅ Multi-Language (EN/FR/AR)
+✅ RTL Support
+✅ Map Integration
+⏳ Reviews & Ratings
+⏳ In-App Messaging
+⏳ Email Notifications
+⏳ Provider Discovery
+⏳ Password Reset
+
+Commandes
+
+"Build reviews & ratings" ⭐
+"Build messaging system" 💬
+"Build email notifications" 📧
+"Build provider search" 🔍
+"Build password reset" 🔐
+"Build all priority 1 features" 🚀

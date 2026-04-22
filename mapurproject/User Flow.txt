@@ -1,0 +1,16 @@
+User Flow
+1. User clicks Forgot Password on login page
+2. Enters email address
+3. Receives reset email with secure token link
+4. Clicks link → Opens reset password page
+5. Enters new password (twice)
+6. Password updated → Can login with new password
+
+
+
+Security Features:
+✅ Time-limited tokens (1 hour expiry)
+✅ Single-use tokens (invalidated after use)
+✅ Secure random token generation
+✅ Rate limiting (prevent abuse)
+✅ Email verification required

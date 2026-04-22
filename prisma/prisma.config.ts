@@ -1,0 +1,27 @@
+// prisma.config.ts
+import { defineConfig } from 'prisma/config';
+import { config } from 'dotenv';
+import { resolve } from 'path';
+
+// ✅ Load .env from project root BEFORE Prisma reads config
+config({ path: resolve(process.cwd(), '.env') });
+
+// ✅ Safely get DATABASE_URL with fallback/error
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error(
+    'DATABASE_URL is not set in .env file. Please add: DATABASE_URL="file:./dev.db"'
+  );
+}
+
+export default defineConfig({
+  migrations: {
+    // Seed command for Prisma 6+
+    seed: 'node --import tsx prisma/seed.ts',
+  },
+  datasource: {
+    // ✅ Now TypeScript knows databaseUrl is a definite string
+    url: databaseUrl,
+  },
+});

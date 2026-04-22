@@ -1,0 +1,80 @@
+/* app/globals.css */
+@import "tailwindcss";
+
+/* Base styles */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+}
+
+/* Component styles */
+@layer components {
+  .input-field {
+    @apply w-full border border-gray-300 rounded-lg px-4 py-2.5 
+           focus:ring-2 focus:ring-blue-500 focus:border-blue-500 
+           outline-none transition-all duration-200
+           placeholder-gray-400;
+  }
+  
+  .btn-primary {
+    @apply bg-blue-600 text-white font-semibold 
+           hover:bg-blue-700 active:bg-blue-800
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
+           transition-all duration-200;
+  }
+}
+/*  app/globals.css for fade-in animation */
+@keyframes fadeIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(-8px);
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+/* Line clamp for truncating text */
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+
+/* RTL support */
+[dir="rtl"] {
+  /* Flip chevrons */
+  .rtl\:rotate-180 {
+    transform: rotate(180deg);
+  }
+  
+  /* Adjust dropdown positioning */
+  [data-profile-dropdown] {
+    transform-origin: top right;
+  }
+}
+[dir="rtl"] .ml-3 { margin-left: 0; margin-right: 0.75rem; }
+[dir="rtl"] .mr-3 { margin-right: 0; margin-left: 0.75rem; }
