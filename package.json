@@ -1,5 +1,5 @@
 {
-  "name": "hayati",
+  "name": "midicare",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "db:seed": "node --import tsx prisma/seed.ts",
-    "db:reset": "npx prisma migrate reset --force && npm run db:seed"
+    "db:reset": "npx prisma migrate reset --force && npm run db:seed",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^7.5.0",

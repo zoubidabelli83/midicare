@@ -49,7 +49,7 @@ export async function sendEmail({ to, subject, html, text }: EmailOptions): Prom
     }
 
     await transporter.sendMail({
-      from: `"Hayati Care" <${process.env.SMTP_FROM || 'noreply@hayati.com'}>`,
+      from: `"MediCare" <${process.env.SMTP_FROM || 'noreply@midicare.com'}>`,
       to,
       subject,
       html,
@@ -75,24 +75,24 @@ export async function sendEmail({ to, subject, html, text }: EmailOptions): Prom
 export function createPasswordResetEmail(locale: string, resetUrl: string, userName: string) {
   const translations: Record<string, any> = {
     en: {
-      subject: 'Reset Your Password - Hayati',
+      subject: 'Reset Your Password - MediCare',
       greeting: `Hello ${userName}`,
       title: 'Password Reset Request',
       message: 'You have requested to reset your password. Click the button below to set a new password:',
       button: 'Reset Password',
       warning: 'This link will expire in 1 hour.',
       ignore: 'If you did not request this, please ignore this email.',
-      footer: '© 2025 Hayati Care. All rights reserved.',
+      footer: '© 2025 MediCare. All rights reserved.',
     },
     fr: {
-      subject: 'Réinitialiser votre mot de passe - Hayati',
+      subject: 'Réinitialiser votre mot de passe - MediCare',
       greeting: `Bonjour ${userName}`,
       title: 'Demande de réinitialisation de mot de passe',
       message: 'Vous avez demandé de réinitialiser votre mot de passe. Cliquez sur le bouton ci-dessous pour définir un nouveau mot de passe:',
       button: 'Réinitialiser le mot de passe',
       warning: 'Ce lien expirera dans 1 heure.',
       ignore: "Si vous n'avez pas demandé ceci, veuillez ignorer cet email.",
-      footer: '© 2025 Hayati Care. Tous droits réservés.',
+      footer: '© 2025 MediCare. Tous droits réservés.',
     },
     ar: {
       subject: 'إعادة تعيين كلمة المرور - حياتي',
@@ -129,7 +129,7 @@ export function createPasswordResetEmail(locale: string, resetUrl: string, userN
 <body>
   <div class="container">
     <div class="header">
-      <h1 style="margin:0; font-size:24px;">🏠 Hayati Care</h1>
+      <h1 style="margin:0; font-size:24px;">🏠 MediCare</h1>
     </div>
     <h2 style="color:#1f2937; margin-top:20px;">${t.title}</h2>
     <p style="color:#4b5563;">${t.greeting},</p>

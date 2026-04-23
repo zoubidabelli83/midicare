@@ -24,7 +24,7 @@ export default function ResetPasswordPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // ✅ FIX: Extract disabled state with explicit boolean type
-  const isFormDisabled: boolean = loading || success;
+  const isFormDisabled: boolean = loading || Boolean(success);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;

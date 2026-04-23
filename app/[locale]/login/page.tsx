@@ -211,9 +211,9 @@ export default function LoginPage() {
             {locale === 'ar' ? 'حسابات تجريبية:' : locale === 'fr' ? 'Comptes de test:' : 'Test Accounts:'}
           </p>
           <div className="text-xs text-blue-700 space-y-1">
-            <p><strong>Admin:</strong> admin@hayati.com / admin123</p>
-            <p><strong>Seeker:</strong> seeker@hayati.com / seeker123</p>
-            <p><strong>Provider:</strong> provider@hayati.com / provider123</p>
+            <p><strong>Admin:</strong> admin@midicare.com / admin123</p>
+            <p><strong>Seeker:</strong> seeker@midicare.com / seeker123</p>
+            <p><strong>Provider:</strong> provider@midicare.com / provider123</p>
           </div>
         </div>
       </div>
