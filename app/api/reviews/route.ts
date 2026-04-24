@@ -1,7 +1,8 @@
 // app/api/reviews/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { supabaseAdmin } from '@/lib/supabase';
 import { getSession } from '@/lib/auth';
+import { randomUUID } from 'crypto';
 
 function jsonResponse(data: any, status: number = 200) {
   return new NextResponse(JSON.stringify(data), {
@@ -14,6 +15,11 @@ function jsonResponse(data: any, status: number = 200) {
   });
 }
 
+function pickFirst<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? value[0] || null : value;
+}
+
 // GET - Get reviews for a user, reviewer, OR platform stats
 export async function GET(request: Request) {
   try {
@@ -23,123 +29,128 @@ export async function GET(request: Request) {
     const platformStats = searchParams.get('platformStats');
     const limit = parseInt(searchParams.get('limit') || '10');
 
-    // Platform-wide stats (for admin dashboard)
     if (platformStats === 'true') {
       const session = await getSession();
       if (!session || session.role !== 'ADMIN') {
         return jsonResponse({ success: false, error: 'Admin access required' }, 403);
       }
 
-      const [totalReviews, avgResult, topProviders] = await Promise.all([
-        prisma.review.count(),
-        prisma.review.aggregate({ _avg: { rating: true } }),
-        prisma.user.findMany({
-          where: { role: 'PROVIDER', totalReviews: { gt: 0 } },
-          select: { id: true, name: true, averageRating: true, totalReviews: true },
-          orderBy: { averageRating: 'desc' },
-          take: 5,
-        }),
+      const [{ count: totalReviews }, { data: allRatings }, { data: topProviders }] = await Promise.all([
+        supabaseAdmin.from('Review').select('*', { count: 'exact', head: true }),
+        supabaseAdmin.from('Review').select('rating'),
+        supabaseAdmin
+          .from('User')
+          .select('id,name,averageRating,totalReviews')
+          .eq('role', 'PROVIDER')
+          .gt('totalReviews', 0)
+          .order('averageRating', { ascending: false })
+          .limit(5),
       ]);
+
+      const ratings = allRatings || [];
+      const avg =
+        ratings.length > 0
+          ? ratings.reduce((sum: number, r: any) => sum + Number(r.rating || 0), 0) / ratings.length
+          : 0;
 
       return jsonResponse({
         success: true,
         platformStats: {
-          totalReviews,
-          averageRating: avgResult._avg.rating || 0,
-          topProviders,
+          totalReviews: totalReviews || 0,
+          averageRating: avg || 0,
+          topProviders: topProviders || [],
         },
       });
     }
 
-    // Reviews given by a user (for seeker dashboard)
     if (reviewerId) {
-      const reviews = await prisma.review.findMany({
-        where: { reviewerId },
-        include: {
-          reviewee: {
-            select: {
-              id: true,
-              name: true,
-              avatarUrl: true,
-              role: true,
-            },
-          },
-          demand: {
-            select: {
-              id: true,
-              title: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: limit,
-      });
+      const { data: reviews, error } = await supabaseAdmin
+        .from('Review')
+        .select(
+          `
+          id,rating,comment,reviewerId,revieweeId,demandId,applicationId,createdAt,updatedAt,
+          User!Review_revieweeId_fkey(id,name,avatarUrl,role),
+          Demand(id,title)
+        `
+        )
+        .eq('reviewerId', reviewerId)
+        .order('createdAt', { ascending: false })
+        .limit(limit);
+
+      if (error) throw new Error(error.message);
 
       return jsonResponse({
         success: true,
-        reviews: reviews || [],
-        count: reviews.length,
+        reviews:
+          (reviews || []).map((r: any) => ({
+            ...r,
+            reviewee: pickFirst(r.User),
+            demand: pickFirst(r.Demand),
+          })) || [],
+        count: reviews?.length || 0,
       });
     }
 
-    // Reviews received by a user (for provider profile/dashboard)
     if (!userId) {
       return jsonResponse({ success: false, error: 'userId or reviewerId required' }, 400);
     }
 
-    const reviews = await prisma.review.findMany({
-      where: { revieweeId: userId },
-      include: {
-        reviewer: {
-          select: {
-            id: true,
-            name: true,
-            avatarUrl: true,
-            role: true,
-          },
-        },
-        demand: {
-          select: {
-            id: true,
-            title: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+    const { data: reviews, error } = await supabaseAdmin
+      .from('Review')
+      .select(
+        `
+        id,rating,comment,reviewerId,revieweeId,demandId,applicationId,createdAt,updatedAt,
+        User!Review_reviewerId_fkey(id,name,avatarUrl,role),
+        Demand(id,title)
+      `
+      )
+      .eq('revieweeId', userId)
+      .order('createdAt', { ascending: false })
+      .limit(limit);
 
-    const avgResult = await prisma.review.aggregate({
-      where: { revieweeId: userId },
-      _avg: { rating: true },
-      _count: { rating: true },
-    });
+    if (error) throw new Error(error.message);
 
-    if (avgResult._avg.rating !== null) {
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          averageRating: avgResult._avg.rating,
-          totalReviews: avgResult._count.rating,
-        },
-      });
-    }
+    const { data: allReviewRatings, error: aggError } = await supabaseAdmin
+      .from('Review')
+      .select('rating')
+      .eq('revieweeId', userId);
+
+    if (aggError) throw new Error(aggError.message);
+
+    const ratings = allReviewRatings || [];
+    const totalReviews = ratings.length;
+    const averageRating =
+      totalReviews > 0
+        ? ratings.reduce((sum: number, r: any) => sum + Number(r.rating || 0), 0) / totalReviews
+        : 0;
+
+    await supabaseAdmin
+      .from('User')
+      .update({
+        averageRating,
+        totalReviews,
+      })
+      .eq('id', userId);
 
     return jsonResponse({
       success: true,
-      reviews: reviews || [],
-      averageRating: avgResult._avg.rating || 0,
-      totalReviews: avgResult._count.rating || 0,
+      reviews:
+        (reviews || []).map((r: any) => ({
+          ...r,
+          reviewer: pickFirst(r.User),
+          demand: pickFirst(r.Demand),
+        })) || [],
+      averageRating,
+      totalReviews,
     });
-
   } catch (error: any) {
     console.error('Reviews GET error:', error);
     return jsonResponse(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Failed to fetch reviews',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined 
-      }, 
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
+      },
       500
     );
   }
@@ -164,67 +175,82 @@ export async function POST(request: Request) {
       return jsonResponse({ success: false, error: 'revieweeId required' }, 400);
     }
 
-    const existingReview = await prisma.review.findFirst({
-      where: {
-        reviewerId: session.userId,
-        OR: [
-          { applicationId: applicationId || undefined },
-          { demandId: demandId || undefined },
-        ],
-      },
-    });
+    let duplicateQuery = supabaseAdmin.from('Review').select('id').eq('reviewerId', session.userId);
 
-    if (existingReview) {
+    if (applicationId) {
+      duplicateQuery = duplicateQuery.eq('applicationId', applicationId);
+    } else if (demandId) {
+      duplicateQuery = duplicateQuery.eq('demandId', demandId);
+    }
+
+    const { data: existingReview } = await duplicateQuery.limit(1);
+
+    if (existingReview && existingReview.length > 0) {
       return jsonResponse({ success: false, error: 'You have already submitted a review' }, 409);
     }
 
-    // ✅ CORRECTED: Proper Prisma create() syntax
-    const review = await prisma.review.create({
-      data: {
-        rating: rating,
+    const { data: review, error: createError } = await supabaseAdmin
+      .from('Review')
+      .insert({
+        id: randomUUID(),
+        rating,
         comment: comment?.trim() || null,
         reviewerId: session.userId,
-        revieweeId: revieweeId,
+        revieweeId,
         demandId: demandId || null,
         applicationId: applicationId || null,
-      },
-      include: {
-        reviewer: {
-          select: {
-            id: true,
-            name: true,
-            avatarUrl: true,
-            role: true,
-          },
+        updatedAt: new Date().toISOString(),
+      })
+      .select(
+        `
+        id,rating,comment,reviewerId,revieweeId,demandId,applicationId,createdAt,updatedAt,
+        User!Review_reviewerId_fkey(id,name,avatarUrl,role)
+      `
+      )
+      .single();
+
+      
+
+    if (createError || !review) throw new Error(createError?.message || 'Failed to create review');
+
+    const { data: allReviewRatings } = await supabaseAdmin
+      .from('Review')
+      .select('rating')
+      .eq('revieweeId', revieweeId);
+
+    const ratings = allReviewRatings || [];
+    const totalReviews = ratings.length;
+    const averageRating =
+      totalReviews > 0
+        ? ratings.reduce((sum: number, r: any) => sum + Number(r.rating || 0), 0) / totalReviews
+        : 0;
+
+    await supabaseAdmin
+      .from('User')
+      .update({
+        averageRating,
+        totalReviews,
+      })
+      .eq('id', revieweeId);
+
+    return jsonResponse(
+      {
+        success: true,
+        review: {
+          ...review,
+          reviewer: pickFirst((review as any).User),
         },
       },
-    });
-
-    const avgResult = await prisma.review.aggregate({
-      where: { revieweeId },
-      _avg: { rating: true },
-      _count: { rating: true },
-    });
-
-    // ✅ CORRECTED: Proper Prisma update() syntax
-    await prisma.user.update({
-      where: { id: revieweeId },
-      data: {
-        averageRating: avgResult._avg.rating || 0,
-        totalReviews: avgResult._count.rating || 0,
-      },
-    });
-
-    return jsonResponse({ success: true, review }, 201);
-
+      201
+    );
   } catch (error: any) {
     console.error('Reviews POST error:', error);
     return jsonResponse(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Failed to create review',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined 
-      }, 
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
+      },
       500
     );
   }
@@ -245,20 +271,18 @@ export async function DELETE(request: Request) {
       return jsonResponse({ success: false, error: 'reviewId required' }, 400);
     }
 
-    await prisma.review.delete({
-      where: { id: reviewId },
-    });
+    const { error } = await supabaseAdmin.from('Review').delete().eq('id', reviewId);
+    if (error) throw new Error(error.message);
 
     return jsonResponse({ success: true, message: 'Review deleted' });
-
   } catch (error: any) {
     console.error('Reviews DELETE error:', error);
     return jsonResponse(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Failed to delete review',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined 
-      }, 
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
+      },
       500
     );
   }

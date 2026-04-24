@@ -1,109 +1,73 @@
 // app/api/auth/reset-password/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import bcrypt from 'bcryptjs';
+import { supabaseAdmin } from '@/lib/supabase';
 
-
-// ✅ Helper to ensure proper JSON response
 function jsonResponse(data: any, status: number = 200) {
   return new NextResponse(JSON.stringify(data), {
     status,
-    headers: { 
+    headers: {
       'Content-Type': 'application/json',
-      'Cache-Control': 'no-store'
+      'Cache-Control': 'no-store',
     },
   });
 }
 
+/**
+ * Expects:
+ * {
+ *   accessToken: string, // recovery access token from Supabase link/session
+ *   password: string,
+ *   confirmPassword: string
+ * }
+ */
 export async function POST(request: Request) {
   try {
-    console.log('📥 Reset Password API - Request received');
-    
-    // ✅ Parse body with error handling
-    let body;
+    let body: any;
     try {
       body = await request.json();
-    } catch (parseError) {
-      console.error('❌ Failed to parse request body:', parseError);
-      return jsonResponse(
-        { success: false, error: 'Invalid request format' },
-        400
-      );
+    } catch {
+      return jsonResponse({ success: false, error: 'Invalid request format' }, 400);
     }
-    
-    const { token, password, confirmPassword } = body;
 
-    // Validate input
-    if (!token || !password || !confirmPassword) {
-      return jsonResponse(
-        { success: false, error: 'All fields are required' },
-        400
-      );
+    const accessToken = String(body?.accessToken || '');
+    const password = String(body?.password || '');
+    const confirmPassword = String(body?.confirmPassword || '');
+
+    if (!accessToken || !password || !confirmPassword) {
+      return jsonResponse({ success: false, error: 'All fields are required' }, 400);
     }
 
     if (password !== confirmPassword) {
-      return jsonResponse(
-        { success: false, error: 'Passwords do not match' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Passwords do not match' }, 400);
     }
 
     if (password.length < 6) {
+      return jsonResponse({ success: false, error: 'Password must be at least 6 characters' }, 400);
+    }
+
+    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(accessToken);
+    if (userError || !userData?.user) {
       return jsonResponse(
-        { success: false, error: 'Password must be at least 6 characters' },
+        { success: false, error: 'Invalid or expired reset token. Please request a new password reset.' },
         400
       );
     }
 
-    console.log('🔍 Validating reset token...');
+    const { data: updateData, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+      userData.user.id,
+      { password }
+    );
 
-    // Find user with valid reset token
-    const user = await prisma.user.findFirst({
-      where: {
-        resetToken: token,
-        resetTokenExpiry: {
-          gte: new Date(), // Token must not be expired
-        },
-      },
-      select: { id: true, email: true },
-    });
-
-    if (!user) {
-      console.log('❌ Invalid or expired token');
-      return jsonResponse({
-        success: false,
-        error: 'Invalid or expired reset token. Please request a new password reset.',
-      }, 400);
+    if (updateError || !updateData?.user) {
+      return jsonResponse({ success: false, error: 'Failed to reset password. Please try again.' }, 500);
     }
 
-    console.log('✅ Token valid for user:', user.email);
-
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    console.log('🔐 Password hashed');
-
-    // Update password and CLEAR reset token (single-use)
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        password: hashedPassword,
-        resetToken: null,      // ✅ Clear token after use
-        resetTokenExpiry: null, // ✅ Clear expiry
-      },
-    });
-
-    console.log('✅ Password updated successfully for:', user.email);
-
-    // ✅ Return proper JSON response
     return jsonResponse({
       success: true,
       message: 'Password reset successfully. You can now login with your new password.',
     });
-
   } catch (error: any) {
-    console.error('💥 Reset Password API error:', error);
-    
-    // ✅ Always return JSON error response
+    console.error('Reset Password API error:', error);
     return jsonResponse(
       {
         success: false,

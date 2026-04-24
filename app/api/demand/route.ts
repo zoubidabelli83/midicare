@@ -1,7 +1,8 @@
 // app/api/demand/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { supabaseAdmin } from '@/lib/supabase';
 import { getSession } from '@/lib/auth';
+import { randomUUID } from 'crypto';
 
 /**
  * Helper: Always return JSON with proper headers
@@ -17,124 +18,108 @@ function jsonResponse(data: any, status: number = 200) {
   });
 }
 
+function mapDemandRow(row: any) {
+  const applicationsCount = Array.isArray(row.Application) ? row.Application.length : 0;
+
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    lat: row.lat,
+    lng: row.lng,
+    status: row.status,
+    seekerId: row.seekerId,
+    createdAt: row.createdAt,
+    seeker: row.User
+      ? {
+          id: row.User.id,
+          name: row.User.name,
+          email: row.User.email,
+          phone: row.User.phone,
+          avatarUrl: row.User.avatarUrl,
+          lat: row.User.lat,
+          lng: row.User.lng,
+          isVerified: row.User.isVerified,
+          role: row.User.role,
+        }
+      : null,
+    _count: {
+      applications: applicationsCount,
+    },
+  };
+}
+
 /**
  * GET - List demands with filters
- * 
- * Query Parameters:
- * - status: Filter by demand status (OPEN | CLOSED)
- * - seekerId: Filter by specific seeker's demands
- * 
- * Access:
- * - SEEKERS: Can see their own demands
- * - PROVIDERS: Can see all OPEN demands
- * - ADMINS: Can see all demands
  */
 export async function GET(request: Request) {
   const requestId = Math.random().toString(36).substring(7);
   console.log(`📥 [DEMAND API ${requestId}] GET request received`);
 
   try {
-    // 1. Get session
     const session = await getSession();
     if (!session) {
       console.warn(`⚠️ [DEMAND API ${requestId}] Unauthorized: No session`);
-      return jsonResponse(
-        { success: false, error: 'Unauthorized. Please log in.' },
-        401
-      );
+      return jsonResponse({ success: false, error: 'Unauthorized. Please log in.' }, 401);
     }
 
     console.log(`🔐 [DEMAND API ${requestId}] User: ${session.email} (${session.role})`);
 
-    // 2. Parse query parameters
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') as 'OPEN' | 'CLOSED' | undefined;
     const seekerId = searchParams.get('seekerId') as string | undefined;
 
-    // 3. Build where clause based on user role
-    const where: any = {};
+    let query = supabaseAdmin
+      .from('Demand')
+      .select(
+        `
+        id,title,description,lat,lng,status,seekerId,createdAt,
+        User:seekerId(id,name,email,phone,avatarUrl,lat,lng,isVerified,role),
+        Application(id)
+      `
+      )
+      .order('createdAt', { ascending: false })
+      .limit(100);
 
     if (session.role === 'SEEKER') {
-      // Seekers can only see their own demands
-      where.seekerId = session.userId;
-      
-      // Allow optional status filter
-      if (status) {
-        where.status = status;
-      }
+      query = query.eq('seekerId', session.userId);
+      if (status) query = query.eq('status', status);
     } else if (session.role === 'PROVIDER') {
-      // Providers can see all OPEN demands (for applying)
-      where.status = 'OPEN';
-      
-      // Allow optional status override
-      if (status) {
-        where.status = status;
-      }
+      query = query.eq('status', status || 'OPEN');
     } else if (session.role === 'ADMIN') {
-      // Admins can see all demands with optional filters
-      if (status) {
-        where.status = status;
-      }
-      if (seekerId) {
-        where.seekerId = seekerId;
-      }
+      if (status) query = query.eq('status', status);
+      if (seekerId) query = query.eq('seekerId', seekerId);
     } else {
       console.warn(`⚠️ [DEMAND API ${requestId}] Invalid role: ${session.role}`);
-      return jsonResponse(
-        { success: false, error: 'Invalid user role' },
-        403
-      );
+      return jsonResponse({ success: false, error: 'Invalid user role' }, 403);
     }
 
-    // 4. Fetch demands with related data
-    console.log(`🔍 [DEMAND API ${requestId}] Fetching demands...`);
-    
-    const demands = await prisma.demand.findMany({
-      where,
-      include: {
-        seeker: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            avatarUrl: true,
-            lat: true,
-            lng: true,
-            isVerified: true,
-            role: true,
-          },
-        },
-        _count: {
-          select: { applications: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100, // Limit results for performance
-    });
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const demands = (data || []).map(mapDemandRow);
 
     console.log(`✅ [DEMAND API ${requestId}] Found ${demands.length} demands`);
 
-    // 5. Return success response
     return jsonResponse({
       success: true,
       demands,
       count: demands.length,
       filters: { status, seekerId },
     });
-
   } catch (error: any) {
     console.error(`💥 [DEMAND API ${requestId}] GET error:`, {
       message: error?.message || 'Unknown error',
-      code: error?.code,
       stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
     });
 
     return jsonResponse(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Failed to fetch demands',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
       },
       500
     );
@@ -143,400 +128,263 @@ export async function GET(request: Request) {
 
 /**
  * POST - Create new demand
- * 
- * Request Body:
- * - title: string (required, 5-100 chars)
- * - description: string (required, 10-1000 chars)
- * - lat: number (required)
- * - lng: number (required)
- * 
- * Access:
- * - Only verified SEEKERS can create demands
- * - User must have ACTIVE status
  */
 export async function POST(request: Request) {
   const requestId = Math.random().toString(36).substring(7);
   console.log(`📥 [DEMAND API ${requestId}] POST request received`);
 
   try {
-    // 1. Get session
     const session = await getSession();
     if (!session) {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Unauthorized: No session`);
-      return jsonResponse(
-        { success: false, error: 'Unauthorized. Please log in.' },
-        401
-      );
+      return jsonResponse({ success: false, error: 'Unauthorized. Please log in.' }, 401);
     }
 
-    console.log(`🔐 [DEMAND API ${requestId}] User: ${session.email} (${session.role})`);
-
-    // 2. Check role - only SEEKERS can create demands
     if (session.role !== 'SEEKER') {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Forbidden: Role ${session.role} cannot create demands`);
-      return jsonResponse(
-        { success: false, error: 'Only care seekers can post demands' },
-        403
-      );
+      return jsonResponse({ success: false, error: 'Only care seekers can post demands' }, 403);
     }
 
-    // 3. Check if seeker is verified and active
-    const seeker = await prisma.user.findUnique({
-      where: { id: session.userId },
-      select: { isVerified: true, status: true, name: true },
-    });
+    const { data: seeker, error: seekerError } = await supabaseAdmin
+      .from('User')
+      .select('isVerified,status,name')
+      .eq('id', session.userId)
+      .single();
 
-    if (!seeker?.isVerified || seeker.status !== 'ACTIVE') {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Seeker not verified or not active`);
+    if (seekerError || !seeker?.isVerified || seeker.status !== 'ACTIVE') {
       return jsonResponse(
         { success: false, error: 'Account not verified or not active. Please wait for admin approval.' },
         403
       );
     }
 
-    // 4. Parse and validate request body
     let body;
     try {
       body = await request.json();
-    } catch (parseError) {
-      console.error(`❌ [DEMAND API ${requestId}] Invalid JSON body`);
-      return jsonResponse(
-        { success: false, error: 'Invalid request body. Expected JSON.' },
-        400
-      );
+    } catch {
+      return jsonResponse({ success: false, error: 'Invalid request body. Expected JSON.' }, 400);
     }
 
     const { title, description, lat, lng } = body;
 
-    // Validate title
     if (!title || typeof title !== 'string') {
-      return jsonResponse(
-        { success: false, error: 'Missing required field: title' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Missing required field: title' }, 400);
     }
 
     const trimmedTitle = title.trim();
     if (trimmedTitle.length < 5) {
-      return jsonResponse(
-        { success: false, error: 'Title must be at least 5 characters long' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Title must be at least 5 characters long' }, 400);
     }
-
     if (trimmedTitle.length > 100) {
-      return jsonResponse(
-        { success: false, error: 'Title must be less than 100 characters' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Title must be less than 100 characters' }, 400);
     }
 
-    // Validate description
     if (!description || typeof description !== 'string') {
-      return jsonResponse(
-        { success: false, error: 'Missing required field: description' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Missing required field: description' }, 400);
     }
 
     const trimmedDescription = description.trim();
     if (trimmedDescription.length < 10) {
-      return jsonResponse(
-        { success: false, error: 'Description must be at least 10 characters long' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Description must be at least 10 characters long' }, 400);
     }
-
     if (trimmedDescription.length > 1000) {
-      return jsonResponse(
-        { success: false, error: 'Description must be less than 1000 characters' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Description must be less than 1000 characters' }, 400);
     }
 
-    // ✅ FIXED: Validate location with proper type checking
     if (lat === undefined || lat === null || lng === undefined || lng === null) {
-      return jsonResponse(
-        { success: false, error: 'Missing required fields: lat, lng' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Missing required fields: lat, lng' }, 400);
     }
 
-    // ✅ FIXED: Type guard to ensure lat and lng are numbers
     const latNum = typeof lat === 'string' ? parseFloat(lat) : Number(lat);
     const lngNum = typeof lng === 'string' ? parseFloat(lng) : Number(lng);
 
-    // Validate coordinates are numbers
     if (isNaN(latNum) || isNaN(lngNum)) {
-      return jsonResponse(
-        { success: false, error: 'Invalid coordinates. lat and lng must be numbers.' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Invalid coordinates. lat and lng must be numbers.' }, 400);
     }
 
-    // Validate coordinates are within reasonable range (Algeria)
-    if (latNum < 18 || latNum > 38 || lngNum < -9 || lngNum > 12) {
-      return jsonResponse(
-        { success: false, error: 'Invalid coordinates. Please select a location in Algeria.' },
-        400
-      );
+    if (latNum < -90 || latNum > 90 || lngNum < -180 || lngNum > 180) {
+      return jsonResponse({ success: false, error: 'Invalid coordinates. Latitude must be -90..90 and longitude must be -180..180.' }, 400);
     }
 
-    console.log(`📝 [DEMAND API ${requestId}] Creating demand: ${trimmedTitle}`);
-
-    // 5. Create demand
-    const demand = await prisma.demand.create({
-      data: {
+    const { data: inserted, error: insertError } = await supabaseAdmin
+      .from('Demand')
+      .insert({
+        id: randomUUID(),  // ✅ Generate unique text ID
         title: trimmedTitle,
         description: trimmedDescription,
-        lat: latNum,  // ✅ No more red line - TypeScript knows this is a number
-        lng: lngNum,  // ✅ No more red line - TypeScript knows this is a number
+        lat: latNum,
+        lng: lngNum,
         seekerId: session.userId,
         status: 'OPEN',
-      },
-      include: {
-        seeker: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            avatarUrl: true,
-          },
-        },
-      },
-    });
+      })
+      .select(
+        `
+        id,title,description,lat,lng,status,seekerId,createdAt,
+        User:seekerId(id,name,email,phone,avatarUrl),
+        Application(id)
+      `
+      )
+      .single();
 
-    console.log(`✅ [DEMAND API ${requestId}] Demand created: ${demand.id}`);
+    if (insertError || !inserted) {
+      throw new Error(insertError?.message || 'Failed to create demand');
+    }
 
-    // 6. Return success response
+    const seekerRow = Array.isArray(inserted.User) ? inserted.User[0] : inserted.User;
+    const demand = {
+      ...mapDemandRow(inserted),
+      seeker: seekerRow
+        ? {
+            id: seekerRow.id,
+            name: seekerRow.name,
+            email: seekerRow.email,
+            phone: seekerRow.phone,
+            avatarUrl: seekerRow.avatarUrl,
+          }
+        : null,
+    };
+
     return jsonResponse(
-      { 
-        success: true, 
+      {
+        success: true,
         message: 'Demand posted successfully!',
         demand,
       },
       201
     );
-
   } catch (error: any) {
     console.error(`💥 [DEMAND API ${requestId}] POST error:`, {
       message: error?.message || 'Unknown error',
-      code: error?.code,
-      meta: error?.meta,
       stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
     });
 
     return jsonResponse(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Failed to create demand',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
       },
       500
     );
   }
 }
+
 /**
  * PATCH - Update demand status (close/open)
- * 
- * Request Body:
- * - demandId: string (required)
- * - status: 'OPEN' | 'CLOSED' (required)
- * 
- * Access:
- * - Only the SEEKER who posted the demand can update it
- * - ADMINS can update any demand
  */
 export async function PATCH(request: Request) {
   const requestId = Math.random().toString(36).substring(7);
   console.log(`📥 [DEMAND API ${requestId}] PATCH request received`);
 
   try {
-    // 1. Get session
     const session = await getSession();
     if (!session) {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Unauthorized: No session`);
-      return jsonResponse(
-        { success: false, error: 'Unauthorized. Please log in.' },
-        401
-      );
+      return jsonResponse({ success: false, error: 'Unauthorized. Please log in.' }, 401);
     }
 
-    console.log(`🔐 [DEMAND API ${requestId}] User: ${session.email} (${session.role})`);
-
-    // 2. Parse request body
     let body;
     try {
       body = await request.json();
-    } catch (parseError) {
-      console.error(`❌ [DEMAND API ${requestId}] Invalid JSON body`);
-      return jsonResponse(
-        { success: false, error: 'Invalid request body. Expected JSON.' },
-        400
-      );
+    } catch {
+      return jsonResponse({ success: false, error: 'Invalid request body. Expected JSON.' }, 400);
     }
 
     const { demandId, status } = body;
 
-    // Validate required fields
     if (!demandId || typeof demandId !== 'string') {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Missing or invalid demandId`);
-      return jsonResponse(
-        { success: false, error: 'Missing required field: demandId' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Missing required field: demandId' }, 400);
     }
 
     if (!status || !['OPEN', 'CLOSED'].includes(status)) {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Invalid status: ${status}`);
-      return jsonResponse(
-        { success: false, error: 'Status must be OPEN or CLOSED' },
-        400
-      );
+      return jsonResponse({ success: false, error: 'Status must be OPEN or CLOSED' }, 400);
     }
 
-    console.log(`📝 [DEMAND API ${requestId}] Updating demand ${demandId} to ${status}`);
+    const { data: demand, error: demandError } = await supabaseAdmin
+      .from('Demand')
+      .select('id,seekerId,status,title')
+      .eq('id', demandId)
+      .single();
 
-    // 3. Get demand to verify ownership
-    const demand = await prisma.demand.findUnique({
-      where: { id: demandId },
-      select: { 
-        seekerId: true,
-        status: true,
-        title: true,
-        seeker: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
-
-    if (!demand) {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Demand not found: ${demandId}`);
-      return jsonResponse(
-        { success: false, error: 'Demand not found' },
-        404
-      );
+    if (demandError || !demand) {
+      return jsonResponse({ success: false, error: 'Demand not found' }, 404);
     }
 
-    // 4. Check authorization (seeker who posted it OR admin)
     if (session.role !== 'ADMIN' && demand.seekerId !== session.userId) {
-      console.warn(`⚠️ [DEMAND API ${requestId}] Unauthorized: User ${session.userId} cannot modify demand ${demandId}`);
       return jsonResponse(
         { success: false, error: 'Unauthorized: You can only modify your own demands' },
         403
       );
     }
 
-    // 5. Check if status is actually changing
     if (demand.status === status) {
-      console.log(`ℹ️ [DEMAND API ${requestId}] Status already ${status}, no update needed`);
-      
-      // Return current demand data
-      const updatedDemand = await prisma.demand.findUnique({
-        where: { id: demandId },
-        include: {
-          seeker: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-              avatarUrl: true,
-            },
-          },
-          _count: {
-            select: { applications: true },
-          },
-        },
-      });
+      const { data: current } = await supabaseAdmin
+        .from('Demand')
+        .select(
+          `
+          id,title,description,lat,lng,status,seekerId,createdAt,
+          User:seekerId(id,name,email,phone,avatarUrl),
+          Application(id)
+        `
+        )
+        .eq('id', demandId)
+        .single();
 
       return jsonResponse({
         success: true,
         message: `Demand is already ${status}`,
-        demand: updatedDemand,
+        demand: current ? mapDemandRow(current) : null,
       });
     }
 
-    // 6. Update demand status
-    const updatedDemand = await prisma.demand.update({
-      where: { id: demandId },
-      data: { status: status as 'OPEN' | 'CLOSED' },
-      include: {
-        seeker: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            avatarUrl: true,
-          },
-        },
-        _count: {
-          select: { applications: true },
-        },
-      },
-    });
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('Demand')
+      .update({ status })
+      .eq('id', demandId)
+      .select(
+        `
+        id,title,description,lat,lng,status,seekerId,createdAt,
+        User:seekerId(id,name,email,phone,avatarUrl),
+        Application(id)
+      `
+      )
+      .single();
 
-    console.log(`✅ [DEMAND API ${requestId}] Demand ${status.toLowerCase()}: ${demandId}`);
+    if (updateError || !updated) {
+      throw new Error(updateError?.message || 'Failed to update demand');
+    }
 
-    // 7. Return success response
     return jsonResponse({
       success: true,
       message: `Demand ${status.toLowerCase()} successfully`,
-      demand: updatedDemand,
+      demand: mapDemandRow(updated),
     });
-
   } catch (error: any) {
     console.error(`💥 [DEMAND API ${requestId}] PATCH error:`, {
       message: error?.message || 'Unknown error',
-      code: error?.code,
-      meta: error?.meta,
       stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined,
     });
 
     return jsonResponse(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Failed to update demand',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
       },
       500
     );
   }
 }
 
-/**
- * Handle unsupported HTTP methods
- */
 export async function PUT() {
-  return jsonResponse(
-    { error: 'Method not allowed. Use GET, POST, or PATCH.' },
-    405
-  );
+  return jsonResponse({ error: 'Method not allowed. Use GET, POST, or PATCH.' }, 405);
 }
 
 export async function DELETE() {
-  return jsonResponse(
-    { error: 'Method not allowed. Demands cannot be deleted, only closed.' },
-    405
-  );
+  return jsonResponse({ error: 'Method not allowed. Demands cannot be deleted, only closed.' }, 405);
 }
 
 export async function HEAD() {
-  return jsonResponse(
-    { error: 'Method not allowed.' },
-    405
-  );
+  return jsonResponse({ error: 'Method not allowed.' }, 405);
 }
 
 export async function OPTIONS() {
-  return jsonResponse(
-    { error: 'Method not allowed.' },
-    405
-  );
+  return jsonResponse({ error: 'Method not allowed.' }, 405);
 }

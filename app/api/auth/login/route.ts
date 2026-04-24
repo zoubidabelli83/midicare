@@ -1,149 +1,131 @@
 // app/api/auth/login/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import bcrypt from 'bcryptjs';
 import { createSession } from '@/lib/auth';
+import { supabaseAdmin } from '@/lib/supabase';
+
+function jsonResponse(data: any, status: number = 200) {
+  return new NextResponse(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 export async function POST(request: Request) {
   try {
-    console.log('📥 Login API - Request received');
-    
-    // Parse request body
     const body = await request.json();
-    const { email, password } = body;
+    const email = String(body?.email || '').trim().toLowerCase();
+    const password = String(body?.password || '');
 
-    console.log('📧 Login attempt for:', email);
-
-    // Validate input
     if (!email || !password) {
-      console.log('❌ Missing email or password');
-      return NextResponse.json(
-        { success: false, error: 'Email and password are required' },
-        { 
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
+      return jsonResponse({ success: false, error: 'Email and password are required' }, 400);
     }
 
-    // Find user (case-insensitive email lookup)
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        password: true,
-        role: true,
-        isVerified: true,
-        status: true,
-        avatarUrl: true,
-        phone: true,
-      },
+    // Sign in via Supabase Auth (source of truth for password)
+    const { data: authData, error: authError } = await supabaseAdmin.auth.signInWithPassword({
+      email,
+      password,
     });
 
-    // User not found
-    if (!user) {
-      console.log('❌ User not found:', email);
-      return NextResponse.json(
-        { success: false, error: 'Invalid email or password' },
-        { 
-          status: 401,
-          headers: { 'Content-Type': 'application/json' }
-        }
+    if (authError || !authData?.user || !authData?.session) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ [LOGIN AUTH ERROR]', {
+          message: authError?.message || null,
+          status: (authError as any)?.status ?? null,
+          code: (authError as any)?.code ?? null,
+          name: (authError as any)?.name ?? null,
+          email,
+        });
+      }
+      return jsonResponse({ success: false, error: 'Invalid email or password' }, 401);
+    }
+
+    const authUserId = authData.user.id;
+    const authEmail = String(authData.user.email || '').trim().toLowerCase();
+
+    // Fetch app profile from "User" table only
+    let { data: profile, error: profileError } = await supabaseAdmin
+      .from('User')
+      .select('id,email,name,role,isVerified,status,avatarUrl,phone')
+      .eq('id', authUserId)
+      .maybeSingle();
+
+    let matchedTable: 'User' | null = profile ? 'User' : null;
+
+    if (!profile) {
+      const { data: byEmail, error: byEmailError } = await supabaseAdmin
+        .from('User')
+        .select('id,email,name,role,isVerified,status,avatarUrl,phone')
+        .eq('email', authEmail)
+        .maybeSingle();
+
+      profile = byEmail || null;
+      profileError = byEmailError || profileError;
+      if (profile) matchedTable = 'User';
+    }
+
+    if (!profile) {
+      const { data: byEmailList, error: byEmailListError } = await supabaseAdmin
+        .from('User')
+        .select('id,email,name,role,isVerified,status,avatarUrl,phone')
+        .ilike('email', authEmail)
+        .limit(1);
+
+      if (byEmailList && byEmailList.length > 0) {
+        profile = byEmailList[0];
+        matchedTable = 'User';
+      }
+      profileError = byEmailListError || profileError;
+    }
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔎 [LOGIN DEBUG] Auth user:', { id: authUserId, email: authEmail });
+      console.log('🔎 [LOGIN DEBUG] Profile lookup result:', {
+        found: !!profile,
+        matchedTable,
+        profileId: profile?.id,
+        profileEmail: profile?.email,
+        lookupError: profileError?.message || null,
+      });
+    }
+
+    if (profileError && !profile) {
+      return jsonResponse({ success: false, error: 'User profile not found' }, 404);
+    }
+
+    if (!profile) {
+      return jsonResponse({ success: false, error: 'User profile not found' }, 404);
+    }
+
+    if (!profile.isVerified) {
+      return jsonResponse(
+        { success: false, error: 'Account not verified. Please wait for admin approval.' },
+        403
       );
     }
 
-    console.log('🔍 User status check:', {
-      email: user.email,
-      isVerified: user.isVerified,
-      status: user.status,
-      role: user.role,
-    });
-
-    // Verify password with bcrypt
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordValid) {
-      console.log('❌ Invalid password for:', email);
-      return NextResponse.json(
-        { success: false, error: 'Invalid email or password' },
-        { 
-          status: 401,
-          headers: { 'Content-Type': 'application/json' }
-        }
+    if (profile.status !== 'ACTIVE') {
+      return jsonResponse(
+        { success: false, error: `Account is ${String(profile.status).toLowerCase()}. Please contact support.` },
+        403
       );
     }
 
-    console.log('✅ Password verified for:', email);
+    await createSession(authData.session.access_token, authData.session.refresh_token);
 
-    // ✅ Check if account is verified AND active
-    if (!user.isVerified) {
-      console.log('❌ Account not verified:', email);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Account not verified. Please wait for admin approval.' 
-        },
-        { 
-          status: 403,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-    }
-
-    if (user.status !== 'ACTIVE') {
-      console.log('❌ Account not active:', email, '- status:', user.status);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: `Account is ${user.status.toLowerCase()}. Please contact support.` 
-        },
-        { 
-          status: 403,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-    }
-
-    console.log('✅ Account verified and active:', email);
-
-    // ✅ Create proper JWT session using helper
-    console.log('🍪 Creating JWT session for:', user.email);
-    await createSession(user.id, user.email, user.role);
-    console.log('✅ JWT session created successfully');
-
-    // Return user data (without password)
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       message: 'Login successful',
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        isVerified: user.isVerified,
-        status: user.status,
-        avatarUrl: user.avatarUrl,
-        phone: user.phone,
-      },
-    }, { 
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      user: profile,
     });
-
   } catch (error: any) {
     console.error('💥 Login API error:', error);
-    return NextResponse.json(
-      { 
-        success: false, 
+    return jsonResponse(
+      {
+        success: false,
         error: 'Login failed. Please try again.',
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
       },
-      { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      }
+      500
     );
   }
 }

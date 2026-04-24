@@ -74,6 +74,7 @@
   },
   "dashboard": {
     "welcome": "Bienvenue, {name} !",
+    "pending_verification": "En attente de vérification",
     "pending_notice": "Votre compte est en attente de vérification. Vous ne pouvez pas encore publier de demandes.",
     "post_demand": "Publier une demande",
     "my_demands": "Mes demandes publiées",

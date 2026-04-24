@@ -74,6 +74,7 @@
   },
   "dashboard": {
     "welcome": "Welcome, {name}!",
+    "pending_verification": "Pending Verification",
     "pending_notice": "Your account is pending verification. You cannot post demands yet.",
     "post_demand": "Post a Demand",
     "my_demands": "My Posted Demands",

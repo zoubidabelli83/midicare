@@ -74,6 +74,7 @@
   },
   "dashboard": {
     "welcome": "مرحباً، {name}!",
+    "pending_verification": "بانتظار التحقق",
     "pending_notice": "حسابك قيد المراجعة. لا يمكنك نشر طلبات بعد.",
     "post_demand": "نشر طلب",
     "my_demands": "طلباتي المنشورة",

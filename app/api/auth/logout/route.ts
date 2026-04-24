@@ -1,18 +1,27 @@
 // app/api/auth/logout/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { deleteSession } from '@/lib/auth';
+
+function jsonResponse(data: any, status: number = 200) {
+  return new NextResponse(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 export async function POST() {
   try {
-    // Clear the session cookie
-    const response = NextResponse.json({ success: true, message: 'Logged out successfully' });
-    
-    // Delete the session cookie
-    response.cookies.delete('session');
-    
-    return response;
-  } catch (error) {
+    await deleteSession();
+    return jsonResponse({ success: true, message: 'Logged out successfully' });
+  } catch (error: any) {
     console.error('Logout error:', error);
-    return NextResponse.json({ success: false, error: 'Failed to logout' }, { status: 500 });
+    return jsonResponse(
+      {
+        success: false,
+        error: 'Failed to logout',
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
+      },
+      500
+    );
   }
 }

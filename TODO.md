@@ -1,12 +1,37 @@
-# TODO - Prepare project for GitHub + Vercel hosting
+# TODO - Prisma removal + Supabase migration (full thorough testing)
 
-- [ ] Update `package.json` scripts for reliable Vercel builds
-  - [ ] Add `postinstall` script to generate Prisma client
-- [ ] Create `vercel.json` with deployment defaults for Next.js
-- [ ] Update `README.md` with:
-  - [ ] GitHub push instructions
-  - [ ] Vercel import/deploy instructions
-  - [ ] Required environment variables list
-  - [ ] Prisma/Supabase production notes
-- [ ] Create `DEPLOYMENT.md` checklist for pre/post deploy validation
-- [ ] Run `npm run build` to validate deployment readiness
+- [x] Phase 1 setup
+  - [x] Create `lib/supabase.ts`
+- [ ] Phase 1 core auth/session/profile/users migration
+  - [x] Migrate `lib/auth.ts` to Supabase-token session helpers
+  - [x] Migrate `app/api/auth/register/route.ts`
+  - [ ] Migrate `app/api/auth/login/route.ts`
+  - [ ] Migrate `app/api/auth/logout/route.ts`
+  - [ ] Migrate `app/api/auth/session/route.ts`
+  - [ ] Migrate `app/api/auth/forgot-password/route.ts`
+  - [ ] Migrate `app/api/auth/reset-password/route.ts`
+  - [ ] Migrate `app/api/users/route.ts`
+  - [ ] Migrate `app/api/profile/route.ts`
+- [ ] Phase 1 thorough backend testing (curl/HTTP)
+  - [ ] Register: success / duplicate / validation failures
+  - [ ] Login: success / wrong password / banned/unverified
+  - [ ] Session: authenticated / anonymous
+  - [ ] Logout
+  - [ ] Forgot password
+  - [ ] Reset password
+  - [ ] Profile GET/PATCH (role-specific + password change)
+  - [ ] Users GET/PATCH (admin auth + actions)
+- [ ] Phase 2 migration
+  - [x] `app/api/demand/route.ts`
+  - [x] `app/api/demand/[id]/route.ts`
+  - [x] `app/api/application/route.ts`
+  - [x] `app/api/reviews/route.ts`
+  - [x] `app/api/admin/users/route.ts`
+  - [x] `app/api/admin/analytics/route.ts`
+  - [x] Patch admin users GET with schema-safe fallback select to fix `/admin` "Failed to fetch users"
+- [ ] Phase 2 thorough backend testing (all endpoint scenarios)
+- [ ] Phase 3 cleanup
+  - [ ] Remove Prisma imports/usages entirely
+  - [ ] Remove Prisma deps/scripts from `package.json`
+  - [ ] Keep or archive `prisma/` directory based on project preference
+- [ ] Final full regression test pass
