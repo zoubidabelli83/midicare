@@ -14,6 +14,25 @@ function jsonResponse(data: any, status: number) {
   });
 }
 
+function errorResponse(
+  error: string,
+  status: number,
+  errorCode?: string,
+  field?: string,
+  extra?: Record<string, unknown>
+) {
+  return jsonResponse(
+    {
+      success: false,
+      error,
+      ...(errorCode ? { errorCode } : {}),
+      ...(field ? { field } : {}),
+      ...(extra || {}),
+    },
+    status
+  );
+}
+
 export async function POST(request: Request) {
   console.log('🔐 [REGISTER API] Received request');
   
@@ -31,9 +50,10 @@ export async function POST(request: Request) {
       });
     } catch (parseError) {
       console.error('❌ [REGISTER API] Failed to parse JSON:', parseError);
-      return jsonResponse(
-        { success: false, error: 'Invalid request body. Expected JSON.' },
-        400
+      return errorResponse(
+        'Invalid request body. Expected JSON.',
+        400,
+        'INVALID_JSON'
       );
     }
 
@@ -49,12 +69,12 @@ export async function POST(request: Request) {
     
     if (missingFields.length > 0) {
       console.warn('⚠️ [REGISTER API] Missing fields:', missingFields);
-      return jsonResponse(
-        { 
-          success: false, 
-          error: `Missing required fields: ${missingFields.join(', ')}` 
-        },
-        400
+      return errorResponse(
+        `Missing required fields: ${missingFields.join(', ')}`,
+        400,
+        'MISSING_FIELDS',
+        undefined,
+        { missingFields }
       );
     }
 
@@ -62,12 +82,11 @@ export async function POST(request: Request) {
     const phoneRegex = /^0[5-7]\d{8}$/;
     if (!phoneRegex.test(phone)) {
       console.warn('⚠️ [REGISTER API] Invalid phone format:', phone);
-      return jsonResponse(
-        { 
-          success: false, 
-          error: 'Phone must be 10 digits (Algerian format: 05XXXXXXXX, 06XXXXXXXX, or 07XXXXXXXX)' 
-        },
-        400
+      return errorResponse(
+        'Phone must be exactly 10 digits (Algerian format: 05XXXXXXXX, 06XXXXXXXX, or 07XXXXXXXX). Example: 0561234567',
+        400,
+        'INVALID_PHONE',
+        'phone'
       );
     }
 
@@ -75,18 +94,22 @@ export async function POST(request: Request) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       console.warn('⚠️ [REGISTER API] Invalid email format:', email);
-      return jsonResponse(
-        { success: false, error: 'Invalid email format' },
-        400
+      return errorResponse(
+        'Invalid email format',
+        400,
+        'INVALID_EMAIL',
+        'email'
       );
     }
 
     // Validate password length
     if (password.length < 6) {
       console.warn('⚠️ [REGISTER API] Password too short');
-      return jsonResponse(
-        { success: false, error: 'Password must be at least 6 characters' },
-        400
+      return errorResponse(
+        'Password must be at least 6 characters',
+        400,
+        'INVALID_PASSWORD',
+        'password'
       );
     }
 
@@ -99,9 +122,11 @@ export async function POST(request: Request) {
 
     if (existingUser) {
       console.warn('⚠️ [REGISTER API] User already exists:', email);
-      return jsonResponse(
-        { success: false, error: 'An account with this email already exists' },
-        409 // Conflict
+      return errorResponse(
+        'An account with this email already exists',
+        409, // Conflict
+        'USER_EXISTS',
+        'email'
       );
     }
 
@@ -165,14 +190,12 @@ export async function POST(request: Request) {
     });
 
     // ✅ Always return JSON, never HTML
-    return jsonResponse(
-      { 
-        success: false, 
-        error: process.env.NODE_ENV === 'development' 
-          ? `Server error: ${error?.message || 'Unknown error'}`
-          : 'Registration failed. Please try again later.'
-      },
-      500
+    return errorResponse(
+      process.env.NODE_ENV === 'development'
+        ? `Server error: ${error?.message || 'Unknown error'}`
+        : 'Registration failed. Please try again later.',
+      500,
+      'INTERNAL_ERROR'
     );
   }
 }
